@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -17,7 +17,11 @@ export const metadata: Metadata = {
   description: "Simulator interaktif untuk pelatihan operator PLTU dan edukasi teknik energi",
   keywords: "PLTU, simulator, pembangkit listrik, tenaga uap, edukasi, pelatihan",
   authors: [{ name: "PLTU Simulator Team" }],
-  viewport: "width=device-width, initial-scale=1",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
