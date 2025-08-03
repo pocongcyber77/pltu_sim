@@ -95,7 +95,7 @@ export default function ControlLever({ lever, onValueChange, actualValue }: Cont
         document.removeEventListener('touchend', handleTouchEnd);
       };
     }
-  }, [isDragging]);
+  }, [isDragging, handleMouseMove, handleMouseUp, handleTouchMove, handleTouchEnd]);
 
   return (
     <div className="flex flex-col items-center space-y-1 lg:space-y-2">

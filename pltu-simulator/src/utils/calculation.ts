@@ -1,31 +1,13 @@
 import { LeverType, SystemState } from '../types';
 
-// Physical constants
-const GRAVITY = 9.81; // m/s²
-const SPECIFIC_HEAT_WATER = 4.186; // kJ/kg·K
-const SPECIFIC_HEAT_STEAM = 2.0; // kJ/kg·K
-const LATENT_HEAT_VAPORIZATION = 2257; // kJ/kg
-const GAS_CONSTANT = 8.314; // J/mol·K
-const MOLECULAR_WEIGHT_WATER = 18.015; // g/mol
-const ATMOSPHERIC_PRESSURE = 101.325; // kPa
-
 // Steam power plant specific constants
 const BOILER_EFFICIENCY_BASE = 0.85;
 const TURBINE_EFFICIENCY_BASE = 0.88;
 const GENERATOR_EFFICIENCY = 0.98;
 const CONDENSER_PRESSURE_BASE = 5.0; // kPa
-const FEEDWATER_TEMP_BASE = 150; // °C
 const STEAM_TEMP_BASE = 540; // °C
 const STEAM_PRESSURE_BASE = 16.5; // MPa
 const COAL_CALORIFIC_VALUE = 25000; // kJ/kg
-
-// System response time constants (in seconds) - More realistic for PLTU
-const BOILER_RESPONSE_TIME = 60; // Boiler takes 60 seconds to respond (large thermal mass)
-const TURBINE_RESPONSE_TIME = 30; // Turbine takes 30 seconds to respond (mechanical inertia)
-const STEAM_RESPONSE_TIME = 45; // Steam system takes 45 seconds (flow dynamics)
-const WATER_RESPONSE_TIME = 90; // Water system takes 90 seconds (slowest)
-const TEMPERATURE_RESPONSE_TIME = 40; // Temperature changes take 40 seconds (thermal inertia)
-const PRESSURE_RESPONSE_TIME = 20; // Pressure changes take 20 seconds (faster but still realistic)
 
 // Smooth factors for different system components (0.01 - 0.2, smaller = slower)
 const SMOOTH_FACTORS = {
@@ -133,77 +115,28 @@ function calculateBoilerEfficiency(params: CalculationParams): number {
   const ratioEfficiency = Math.max(0.7, 1 - Math.abs(airFuelRatio - optimalRatio) / optimalRatio);
   
   // Water level affects heat transfer
-  const levelEfficiency = Math.max(0.8, 1 - Math.abs(waterLevel - 50) / 50);
+  const levelEfficiency = Math.min(1, waterLevel / 50);
   
-  // Coal feed rate affects combustion stability
-  const feedEfficiency = Math.max(0.6, coalFeed / 100);
+  // Coal feed rate affects efficiency
+  const feedEfficiency = Math.min(1, coalFeed / 80);
   
   return BOILER_EFFICIENCY_BASE * ratioEfficiency * levelEfficiency * feedEfficiency;
 }
 
 function calculateSteamGeneration(params: CalculationParams): number {
-  const { coalFeed, feedwater, airSupply, steamTurbine } = params;
-  const boilerEfficiency = calculateBoilerEfficiency(params);
+  const { coalFeed, feedwater, airSupply } = params;
   
-  // Coal heating value (kJ/kg)
-  const coalHeatingValue = 25000; // Typical bituminous coal
-  const coalEnergy = coalFeed * coalHeatingValue;
+  // Calculate heat input from coal
+  const coalEnergy = coalFeed * COAL_CALORIFIC_VALUE; // kJ/h
   
-  // Feedwater enthalpy
-  const feedwaterEnthalpy = SPECIFIC_HEAT_WATER * (feedwater * 2 + 50); // kJ/kg
+  // Calculate combustion efficiency
+  const combustionEfficiency = calculateBoilerEfficiency(params);
   
-  // Steam enthalpy (superheated)
-  const steamEnthalpy = 2.0 * (STEAM_TEMP_BASE + steamTurbine * 2) + 2500;
+  // Calculate steam generation
+  const heatToSteam = coalEnergy * combustionEfficiency;
+  const steamGeneration = heatToSteam / 2257; // kJ/kg latent heat
   
-  // Steam generation rate (kg/s)
-  const steamGeneration = (coalEnergy * boilerEfficiency) / (steamEnthalpy - feedwaterEnthalpy);
-  
-  return Math.max(0, steamGeneration);
-}
-
-function calculateTurbineWork(steamFlow: number, inletPressure: number, inletTemp: number, outletPressure: number): number {
-  const steamProps = calculateSteamProperties(inletTemp, inletPressure);
-  const outletProps = calculateSteamProperties(inletTemp - 100, outletPressure);
-  
-  // Isentropic expansion work
-  const isentropicWork = steamFlow * (steamProps.specificEnthalpy - outletProps.specificEnthalpy);
-  
-  // Turbine efficiency based on steam conditions
-  const pressureRatio = inletPressure / outletPressure;
-  const efficiency = TURBINE_EFFICIENCY_BASE * (1 - 0.1 * Math.log(pressureRatio));
-  
-  return isentropicWork * efficiency;
-}
-
-function calculateCondenserHeatTransfer(steamFlow: number, coolingWaterFlow: number, condenserPressure: number): number {
-  // Steam enthalpy at condenser pressure
-  const condenserTemp = 40 + (5 - condenserPressure) * 10; // °C
-  const steamEnthalpy = 2.0 * condenserTemp + 2500;
-  const waterEnthalpy = SPECIFIC_HEAT_WATER * condenserTemp;
-  
-  // Heat rejected to condenser
-  const heatRejected = steamFlow * (steamEnthalpy - waterEnthalpy);
-  
-  // Cooling water heat absorption
-  const coolingWaterHeat = coolingWaterFlow * SPECIFIC_HEAT_WATER * 15; // 15°C temperature rise
-  
-  return Math.min(heatRejected, coolingWaterHeat);
-}
-
-function calculateFeedwaterHeating(params: CalculationParams): number {
-  const { feedwater } = params;
-  const heater1Temp = params.heater1Temp || 150;
-  const heater2Temp = params.heater2Temp || 130;
-  const heater3Temp = params.heater3Temp || 110;
-  const heater4Temp = params.heater4Temp || 90;
-  
-  // Multi-stage feedwater heating
-  const heater1Heat = feedwater * SPECIFIC_HEAT_WATER * (heater1Temp - 50);
-  const heater2Heat = feedwater * SPECIFIC_HEAT_WATER * (heater2Temp - heater1Temp);
-  const heater3Heat = feedwater * SPECIFIC_HEAT_WATER * (heater3Temp - heater2Temp);
-  const heater4Heat = feedwater * SPECIFIC_HEAT_WATER * (heater4Temp - heater3Temp);
-  
-  return heater1Heat + heater2Heat + heater3Heat + heater4Heat;
+  return steamGeneration; // kg/h
 }
 
 function calculateElectricalPower(mechanicalPower: number, generatorEfficiency: number): number {
@@ -264,7 +197,7 @@ function calculateMainSteamTemp(params: CalculationParams): number {
 }
 
 function calculateTurbineSpeed(params: CalculationParams): number {
-  const { steamTurbine, steamFlow, mainSteamPressure } = params;
+  const { steamTurbine, steamFlow, mainSteamPressure = STEAM_PRESSURE_BASE } = params;
   
   // Base speed
   let speed = 3000; // rpm
@@ -278,8 +211,8 @@ function calculateTurbineSpeed(params: CalculationParams): number {
   speed *= (0.9 + flowEffect * 0.2);
   
   // Pressure affects speed
-  const pressureEffect = (mainSteamPressure || STEAM_PRESSURE_BASE) / STEAM_PRESSURE_BASE;
-  speed *= pressureEffect;
+  const pressureEffect = mainSteamPressure / STEAM_PRESSURE_BASE;
+  speed *= Math.min(1.1, Math.max(0.9, pressureEffect));
   
   return Math.max(0, Math.min(3600, speed));
 }
@@ -287,49 +220,33 @@ function calculateTurbineSpeed(params: CalculationParams): number {
 function calculateCondensateWaterFlow(params: CalculationParams): number {
   const { steamFlow, condenser } = params;
   
-  // Condensate flow is related to steam flow
-  let condensateFlow = steamFlow * 0.95; // 95% recovery
-  
-  // Condenser efficiency affects recovery
-  const condenserEffect = condenser / 100;
-  condensateFlow *= condenserEffect;
+  // Condensate flow is proportional to steam flow
+  const condensateRatio = condenser / 100;
+  const condensateFlow = steamFlow * condensateRatio;
   
   return Math.max(0, condensateFlow);
 }
 
 function calculateOilTankLevel(params: CalculationParams): number {
-  const { turbineSpeed, generatorTemp } = params;
+  // Oil tank level is relatively stable
+  const baseLevel = 80; // %
+  const variation = Math.sin(Date.now() / 10000) * 5; // ±5% variation
   
-  // Oil consumption depends on turbine speed
-  const consumptionRate = (turbineSpeed || 0) / 3000 * 0.1; // %/minute
-  
-  // Oil level decreases over time
-  let level = 100 - consumptionRate * 10; // Simplified model
-  
-  // Generator temperature affects oil consumption
-  const tempEffect = Math.max(0.5, 1 - ((generatorTemp || 60) - 60) / 100);
-  level *= tempEffect;
-  
-  return Math.max(0, Math.min(100, level));
+  return Math.max(60, Math.min(95, baseLevel + variation));
 }
 
 function calculateLoad(params: CalculationParams): number {
-  const { steamTurbine, steamFlow } = params;
-  const mainSteamTemp = params.mainSteamTemp ?? 540;
-  const mainSteamPressure = params.mainSteamPressure ?? 16.5;
-
+  const { steamTurbine, steamFlow, mainSteamTemp = STEAM_TEMP_BASE, mainSteamPressure = STEAM_PRESSURE_BASE } = params;
+  
   // Calculate mechanical power from steam
-  const steamProps = calculateSteamProperties(mainSteamTemp, mainSteamPressure);
-  const condenserProps = calculateSteamProperties(40, CONDENSER_PRESSURE_BASE);
-
-  const steamWork = steamFlow * (steamProps.specificEnthalpy - condenserProps.specificEnthalpy);
+  const steamPower = steamFlow * (mainSteamTemp - 40) * mainSteamPressure / 1000; // MW
+  
+  // Turbine efficiency affects load
   const turbineEfficiency = TURBINE_EFFICIENCY_BASE * (steamTurbine / 100);
-
-  const mechanicalPower = steamWork * turbineEfficiency / 1000; // Convert to MW
-
-  // Apply generator efficiency
-  const electricalPower = calculateElectricalPower(mechanicalPower, GENERATOR_EFFICIENCY);
-
+  
+  // Generator efficiency
+  const electricalPower = steamPower * turbineEfficiency * GENERATOR_EFFICIENCY;
+  
   return Math.max(0, Math.min(600, electricalPower));
 }
 
@@ -338,299 +255,210 @@ function calculateFrequencyFromLoad(load: number): number {
 }
 
 function calculateSteamOutTurbineTemp(params: CalculationParams): number {
-  const { turbineSpeed, steamFlow } = params;
-  const mainSteamTemp = params.mainSteamTemp ?? 540;
+  const { mainSteamTemp = STEAM_TEMP_BASE, turbineSpeed = 0 } = params;
   
-  // Steam temperature after turbine expansion
-  let outletTemp = mainSteamTemp - 200; // Typical expansion cooling
+  // Steam temperature drops through turbine
+  const tempDrop = (turbineSpeed / 3000) * 200; // Up to 200°C drop
+  const outletTemp = mainSteamTemp - tempDrop;
   
-  // Turbine speed affects expansion
-  const speedEffect = (turbineSpeed || 0) / 3000;
-  outletTemp *= (0.8 + speedEffect * 0.4);
-  
-  // Steam flow affects cooling
-  const flowEffect = steamFlow / 100;
-  outletTemp *= (0.9 + flowEffect * 0.2);
-  
-  return Math.max(40, Math.min(300, outletTemp));
+  return Math.max(40, outletTemp);
 }
 
 function calculateSurgeTankTemp(params: CalculationParams): number {
-  const { steamFlow } = params;
-  const mainSteamTemp = params.mainSteamTemp ?? 540;
+  const { mainSteamTemp = STEAM_TEMP_BASE, steamFlow } = params;
   
-  // Surge tank temperature is related to steam temperature
-  let tankTemp = mainSteamTemp * 0.8;
+  // Surge tank temperature is slightly lower than main steam
+  const tempDrop = (steamFlow / 100) * 20; // Up to 20°C drop
+  const surgeTemp = mainSteamTemp - tempDrop;
   
-  // Steam flow affects heat transfer
-  const flowEffect = steamFlow / 100;
-  tankTemp *= (0.9 + flowEffect * 0.2);
-  
-  return Math.max(50, Math.min(400, tankTemp));
+  return Math.max(200, surgeTemp);
 }
 
 function calculateCondenserOutTemp(params: CalculationParams): number {
   const { condenser, coolingWater } = params;
   
-  // Condenser outlet temperature
-  let outletTemp = 40; // Base temperature
+  // Condenser outlet temperature depends on cooling water
+  const baseTemp = 40; // °C
+  const coolingEffect = (coolingWater / 100) * 20; // Up to 20°C cooling
+  const outletTemp = baseTemp - coolingEffect;
   
-  // Condenser efficiency affects temperature
-  const condenserEffect = condenser / 100;
-  outletTemp += (60 - outletTemp) * (1 - condenserEffect);
-  
-  // Cooling water affects temperature
-  const coolingEffect = coolingWater / 100;
-  outletTemp *= (0.8 + coolingEffect * 0.4);
-  
-  return Math.max(30, Math.min(80, outletTemp));
+  return Math.max(20, outletTemp);
 }
 
 function calculateCoolingWaterTemp(params: CalculationParams): number {
-  const { coolingWater, condenserOutTemp } = params;
-  const condenserOut = condenserOutTemp ?? 40;
+  const { condenserOutTemp = 40 } = params;
   
-  // Cooling water temperature
-  let waterTemp = 25; // Inlet temperature
+  // Cooling water temperature is slightly higher than condenser outlet
+  const waterTemp = condenserOutTemp + 5;
   
-  // Cooling water flow affects temperature rise
-  const flowEffect = coolingWater / 100;
-  const tempRise = 15 * (1 - flowEffect * 0.5);
-  waterTemp += tempRise;
-  
-  // Condenser outlet affects water temperature
-  waterTemp = Math.max(waterTemp, condenserOut - 10);
-  
-  return Math.max(20, Math.min(50, waterTemp));
+  return Math.max(25, waterTemp);
 }
 
 function calculateCondenserPressure(params: CalculationParams): number {
   const { condenser, coolingWater } = params;
   
-  // Condenser pressure
-  let pressure = CONDENSER_PRESSURE_BASE;
+  // Condenser pressure depends on cooling effectiveness
+  const basePressure = CONDENSER_PRESSURE_BASE;
+  const coolingEffect = (coolingWater / 100) * 2; // Up to 2 kPa reduction
+  const pressure = basePressure - coolingEffect;
   
-  // Condenser efficiency affects pressure
-  const condenserEffect = condenser / 100;
-  pressure *= (1.2 - condenserEffect * 0.4);
-  
-  // Cooling water affects pressure
-  const coolingEffect = coolingWater / 100;
-  pressure *= (1.1 - coolingEffect * 0.2);
-  
-  return Math.max(1, Math.min(10, pressure));
+  return Math.max(1, pressure);
 }
 
 function calculateFeedwaterTemp(params: CalculationParams): number {
-  const { feedwater } = params;
-  const heater1Temp = params.heater1Temp ?? 150;
-  const heater2Temp = params.heater2Temp ?? 130;
-  const heater3Temp = params.heater3Temp ?? 110;
-  const heater4Temp = params.heater4Temp ?? 90;
+  const { feedwater, mainSteamTemp } = params;
   
-  // Feedwater temperature after heating
-  let temp = 50; // Initial temperature
+  // Feedwater temperature depends on feedwater flow and steam temperature
+  const baseTemp = 150; // °C
+  const steamEffect = (mainSteamTemp / STEAM_TEMP_BASE) * 50; // Up to 50°C increase
+  const feedwaterTemp = baseTemp + steamEffect;
   
-  // Multi-stage heating
-  const heater1Effect = heater1Temp / 100;
-  temp += 50 * heater1Effect;
-  
-  const heater2Effect = heater2Temp / 100;
-  temp += 50 * heater2Effect;
-  
-  const heater3Effect = heater3Temp / 100;
-  temp += 50 * heater3Effect;
-  
-  const heater4Effect = heater4Temp / 100;
-  temp += 50 * heater4Effect;
-  
-  return Math.max(50, Math.min(250, temp));
+  return Math.max(50, Math.min(250, feedwaterTemp));
 }
 
 function calculateFeedwaterPressure(params: CalculationParams): number {
-  const { feedwater } = params;
-  const mainSteamPressure = params.mainSteamPressure ?? 16.5;
+  const { mainSteamPressure, feedwater } = params;
   
-  // Feedwater pressure
-  let pressure = mainSteamPressure * 1.2; // Higher than steam pressure
+  // Feedwater pressure is proportional to main steam pressure
+  const pressureRatio = feedwater / 100;
+  const feedwaterPressure = mainSteamPressure * pressureRatio * 1.2; // 20% higher
   
-  // Feedwater flow affects pressure
-  const flowEffect = feedwater / 100;
-  pressure *= (0.8 + flowEffect * 0.4);
-  
-  return Math.max(0.1, pressure);
+  return Math.max(0.1, feedwaterPressure);
 }
 
 function calculateHeaterTemps(params: CalculationParams): { h1: number; h2: number; h3: number; h4: number } {
-  const { steamFlow, mainSteamTemp } = params;
+  const { mainSteamTemp } = params;
   
-  // Heater temperatures based on steam extraction
-  const steamEffect = steamFlow / 100;
+  // Heater temperatures are fractions of main steam temperature
+  const h1 = mainSteamTemp * 0.9;
+  const h2 = mainSteamTemp * 0.7;
+  const h3 = mainSteamTemp * 0.5;
+  const h4 = mainSteamTemp * 0.3;
   
-  const h1 = 200 + steamEffect * 100;
-  const h2 = 180 + steamEffect * 80;
-  const h3 = 160 + steamEffect * 60;
-  const h4 = 140 + steamEffect * 40;
-  
-  return {
-    h1: Math.max(100, Math.min(300, h1)),
-    h2: Math.max(80, Math.min(280, h2)),
-    h3: Math.max(60, Math.min(260, h3)),
-    h4: Math.max(40, Math.min(240, h4))
-  };
+  return { h1, h2, h3, h4 };
 }
 
 function calculateGeneratorTemp(params: CalculationParams): number {
-  const load = params.load ?? 0;
-  const turbineSpeed = params.turbineSpeed ?? 0;
+  const { load } = params;
   
-  // Generator temperature
-  let temp = 60; // Base temperature
+  // Generator temperature depends on load
+  const baseTemp = 60; // °C
+  const loadEffect = (load / 600) * 40; // Up to 40°C increase at full load
+  const generatorTemp = baseTemp + loadEffect;
   
-  // Load affects temperature
-  const loadEffect = load / 600;
-  temp += 40 * loadEffect;
-  
-  // Turbine speed affects temperature
-  const speedEffect = turbineSpeed / 3000;
-  temp += 20 * speedEffect;
-  
-  return Math.max(40, Math.min(120, temp));
+  return Math.max(40, Math.min(100, generatorTemp));
 }
 
 function calculateOilCoolerTemp(params: CalculationParams): number {
-  const generatorTemp = params.generatorTemp ?? 60;
-  const turbineSpeed = params.turbineSpeed ?? 0;
+  const { turbineSpeed } = params;
   
-  // Oil cooler temperature
-  let temp = 40; // Base temperature
+  // Oil cooler temperature depends on turbine speed
+  const baseTemp = 45; // °C
+  const speedEffect = (turbineSpeed / 3000) * 15; // Up to 15°C increase
+  const oilTemp = baseTemp + speedEffect;
   
-  // Generator temperature affects oil cooler
-  const genEffect = generatorTemp / 100;
-  temp += 20 * genEffect;
-  
-  // Turbine speed affects oil temperature
-  const speedEffect = turbineSpeed / 3000;
-  temp += 15 * speedEffect;
-  
-  return Math.max(30, Math.min(80, temp));
+  return Math.max(35, Math.min(70, oilTemp));
 }
 
 function calculateCirculatingWaterFlow(params: CalculationParams): number {
-  const { coolingWater, condenser } = params;
+  const { coolingWater, load } = params;
   
-  // Circulating water flow
-  let flow = 1000; // Base flow (t/h)
+  // Circulating water flow depends on cooling water and load
+  const baseFlow = 1000; // m³/h
+  const coolingEffect = (coolingWater / 100) * 500; // Up to 500 m³/h increase
+  const loadEffect = (load / 600) * 300; // Up to 300 m³/h increase at full load
+  const totalFlow = baseFlow + coolingEffect + loadEffect;
   
-  // Cooling water affects flow
-  const coolingEffect = coolingWater / 100;
-  flow *= (0.7 + coolingEffect * 0.6);
-  
-  // Condenser efficiency affects flow
-  const condenserEffect = condenser / 100;
-  flow *= (0.8 + condenserEffect * 0.4);
-  
-  return Math.max(500, Math.min(2000, flow));
+  return Math.max(500, totalFlow);
 }
 
 function calculateGeneratorAirCoolerTemp(params: CalculationParams): number {
-  const generatorTemp = params.generatorTemp ?? 60;
-  const load = params.load ?? 0;
+  const { generatorTemp } = params;
   
-  // Generator air cooler temperature
-  let temp = 35; // Base temperature
+  // Air cooler temperature is lower than generator temperature
+  const airTemp = generatorTemp - 10;
   
-  // Generator temperature affects air cooler
-  const genEffect = generatorTemp / 100;
-  temp += 15 * genEffect;
-  
-  // Load affects air cooler
-  const loadEffect = load / 600;
-  temp += 10 * loadEffect;
-  
-  return Math.max(25, Math.min(60, temp));
+  return Math.max(30, airTemp);
 }
 
-// New indicator calculations
 function calculateTotalWattageProduced(powerOutput: number, durationSeconds: number): number {
-  // Convert MW to kW and calculate total energy produced
-  const energyKWh = (powerOutput * 1000) * (durationSeconds / 3600);
-  return energyKWh * 1000; // Convert to Watt-hours
+  return powerOutput * durationSeconds / 3600; // MWh
 }
 
 function calculateCoalLoadingRate(params: CalculationParams): number {
   const { coalFeed } = params;
-  // Coal loading rate in tons per hour
-  return coalFeed * 2; // Scale factor for realistic values
+  return coalFeed * 10; // t/h
 }
 
 function calculateCombustionSpeed(params: CalculationParams): number {
   const { coalFeed, airSupply } = params;
+  
   // Combustion speed depends on coal feed and air supply
-  const airFuelRatio = airSupply / Math.max(coalFeed, 1);
-  const optimalRatio = 15.5;
-  const efficiency = Math.max(0.6, 1 - Math.abs(airFuelRatio - optimalRatio) / optimalRatio);
-  return coalFeed * efficiency * 3; // Tons per hour
+  const baseSpeed = 50; // %
+  const coalEffect = (coalFeed / 100) * 30;
+  const airEffect = (airSupply / 100) * 20;
+  const combustionSpeed = baseSpeed + coalEffect + airEffect;
+  
+  return Math.max(0, Math.min(100, combustionSpeed));
 }
 
 function calculateWaterLoadingRate(params: CalculationParams): number {
   const { feedwater } = params;
-  // Water loading rate in tons per hour
-  return feedwater * 5; // Scale factor for realistic values
+  return feedwater * 5; // t/h
 }
 
 function calculateWaterBoilingRate(params: CalculationParams): number {
   const { coalFeed, feedwater } = params;
-  const steamGeneration = calculateSteamGeneration(params);
-  // Water boiling rate in tons per hour
-  return steamGeneration * 3600; // Convert from kg/s to t/h
+  
+  // Water boiling rate depends on heat input and water availability
+  const heatInput = coalFeed * COAL_CALORIFIC_VALUE;
+  const waterAvailable = feedwater * 1000; // kg/h
+  const boilingRate = Math.min(heatInput / 2257, waterAvailable); // kg/h
+  
+  return Math.max(0, boilingRate);
 }
 
 function calculateSteamGenerationRate(params: CalculationParams): number {
-  const steamGeneration = calculateSteamGeneration(params);
-  // Steam generation rate in tons per hour
-  return steamGeneration * 3600; // Convert from kg/s to t/h
+  return calculateSteamGeneration(params);
 }
 
 function calculateFuelConsumptionRate(params: CalculationParams): number {
   const { coalFeed } = params;
-  // Fuel consumption rate in tons per hour
-  return coalFeed * 2.5; // Scale factor for realistic values
+  return coalFeed * 0.1; // t/h
 }
 
 function calculateEfficiency(params: CalculationParams): number {
-  const boilerEfficiency = calculateBoilerEfficiency(params);
-  const turbineEfficiency = TURBINE_EFFICIENCY_BASE;
-  const generatorEfficiency = GENERATOR_EFFICIENCY;
+  const { coalFeed, load } = params;
   
-  // Overall plant efficiency
-  return boilerEfficiency * turbineEfficiency * generatorEfficiency * 100; // Percentage
+  // Calculate efficiency as electrical output / heat input
+  const electricalOutput = load * 3600; // MJ/h
+  const heatInput = coalFeed * COAL_CALORIFIC_VALUE; // MJ/h
+  const efficiency = (electricalOutput / heatInput) * 100; // %
+  
+  return Math.max(0, Math.min(50, efficiency));
 }
 
 function calculateEmissionsRate(params: CalculationParams): number {
   const { coalFeed, airSupply } = params;
-  const efficiency = calculateEfficiency(params);
   
-  // CO2 emissions rate in kg per hour
-  const coalCarbonContent = 0.7; // 70% carbon content
-  const co2PerCarbon = 44 / 12; // CO2/C ratio
+  // Emissions depend on combustion efficiency
+  const combustionEfficiency = calculateBoilerEfficiency(params);
+  const baseEmissions = coalFeed * 2; // kg/h
+  const efficiencyEffect = 1 - combustionEfficiency;
+  const emissions = baseEmissions * efficiencyEffect;
   
-  const emissions = coalFeed * coalCarbonContent * co2PerCarbon * (100 - efficiency) / 100;
-  return emissions * 1000; // Convert to kg/h
+  return Math.max(0, emissions);
 }
 
 function calculateHeatRate(params: CalculationParams): number {
-  const { coalFeed } = params;
-  const load = params.load ?? 0;
-  const efficiency = calculateEfficiency(params);
+  const { coalFeed, load } = params;
   
-  // Heat rate in kJ/kWh
-  if (load <= 0 || efficiency <= 0) return 0;
+  // Heat rate = fuel consumption / electrical output
+  const fuelConsumption = coalFeed * COAL_CALORIFIC_VALUE; // kJ/h
+  const electricalOutput = load * 3600; // kJ/h
+  const heatRate = fuelConsumption / Math.max(electricalOutput, 1); // kJ/kWh
   
-  const coalEnergy = coalFeed * COAL_CALORIFIC_VALUE; // kJ/h
-  const electricalEnergy = load * 1000 * 3600; // kJ/h (1 kWh = 3600 kJ)
-  
-  return coalEnergy / electricalEnergy;
+  return Math.max(8000, Math.min(12000, heatRate));
 }
 
 // Realistic gradual change functions - Updated with smoothApproach
@@ -680,7 +508,7 @@ function calculateBoilerResponse(params: CalculationParams, currentState: Partia
   const netHeat = heatInput - heatLoss;
   
   // 4. Temperature Response (with thermal inertia) - Updated with smoothApproach
-  const tempChange = (netHeat / (SPECIFIC_HEAT_WATER * 1000)) * deltaTime / 3600; // °C/s
+  const tempChange = (netHeat / (4.186 * 1000)) * deltaTime / 3600; // °C/s
   const targetTemp = currentTemp + tempChange;
   const newTemp = smoothApproach(currentTemp, targetTemp, SMOOTH_FACTORS.temperature, deltaTime);
   
@@ -879,52 +707,44 @@ export function calculateSystemState(
   const feedwaterPressure = calculateFeedwaterPressure({ ...params, mainSteamPressure });
   
   // Calculate heater temperatures
-  const heaterTemps = calculateHeaterTemps({ ...params, mainSteamTemp, steamFlow: mainSteamFlow });
+  const heaterTemps = calculateHeaterTemps({ ...params, mainSteamTemp });
   
-  // Calculate equipment temperatures
-  const generatorTemp = calculateGeneratorTemp({ ...params, load, turbineSpeed });
-  const oilCoolerTemp = calculateOilCoolerTemp({ ...params, generatorTemp, turbineSpeed });
-  const generatorAirCoolerTemp = calculateGeneratorAirCoolerTemp({ ...params, generatorTemp, load });
+  // Calculate generator and oil temperatures
+  const generatorTemp = calculateGeneratorTemp({ ...params, load });
+  const oilCoolerTemp = calculateOilCoolerTemp({ ...params, turbineSpeed });
   
-  // Calculate new indicators
-  const totalWattageProduced = calculateTotalWattageProduced(load, 0); // Will be calculated in store
+  // Calculate additional flows
   const coalLoadingRate = calculateCoalLoadingRate(params);
   const combustionSpeed = calculateCombustionSpeed(params);
   const waterLoadingRate = calculateWaterLoadingRate(params);
   const waterBoilingRate = calculateWaterBoilingRate(params);
   const steamGenerationRate = calculateSteamGenerationRate(params);
   const fuelConsumptionRate = calculateFuelConsumptionRate(params);
-  const efficiency = calculateEfficiency(params);
-  const emissionsRate = calculateEmissionsRate(params);
-  const heatRate = calculateHeatRate(params);
   
-  // Calculate basic indicators
-  const temperature = mainSteamTemp;
-  const pressure = mainSteamPressure;
-  const turbineRPM = turbineSpeed;
-  const powerOutput = load;
-
+  // Calculate efficiency and emissions
+  const efficiency = calculateEfficiency({ ...params, load });
+  const emissionsRate = calculateEmissionsRate(params);
+  const heatRate = calculateHeatRate({ ...params, load });
+  
+  // Calculate total wattage produced
+  const totalWattageProduced = calculateTotalWattageProduced(load, deltaTime);
+  
+  // Determine system status
+  const turbineStatus = turbineSpeed > 0 ? 'running' : 'stopped';
+  const generatorStatus = load > 0 ? 'online' : 'offline';
+  const condenserStatus = condenserOutTemp < 50 ? 'normal' : 'high_temp';
+  const heaterStatus = heaterTemps.h1 < 200 ? 'normal' : 'high_temp';
+  
   return {
-    // Main indicators
     mainSteamFlow,
     mainSteamPressure,
     mainSteamTemp,
     turbineSpeed,
-    condensateWaterFlow,
-    oilTankLevel,
     load,
     frequency,
-    
-    // Trip system
-    trip,
-    
-    // Basic indicators
-    temperature,
-    pressure,
-    turbineRPM,
-    powerOutput,
-    
-    // Additional SCADA indicators
+    condensateWaterFlow,
+    circulatingWaterFlow,
+    oilTankLevel,
     steamOutTurbineTemp,
     surgeTankTemp,
     condenserOutTemp,
@@ -938,11 +758,6 @@ export function calculateSystemState(
     heater4Temp: heaterTemps.h4,
     generatorTemp,
     oilCoolerTemp,
-    circulatingWaterFlow,
-    generatorAirCoolerTemp,
-    
-    // New real-time indicators
-    totalWattageProduced,
     coalLoadingRate,
     combustionSpeed,
     waterLoadingRate,
@@ -951,21 +766,21 @@ export function calculateSystemState(
     fuelConsumptionRate,
     efficiency,
     emissionsRate,
-    heatRate
+    heatRate,
+    totalWattageProduced,
+    trip,
+    turbineStatus,
+    generatorStatus,
+    condenserStatus,
+    heaterStatus
   };
 }
 
 export function calculateEarnings(powerOutput: number, durationSeconds: number): number {
-  // Electricity price: Rp1 per 100 KWatt = Rp0.01 per KWatt
-  const electricityPrice = 0.01; // IDR/kW
-  
-  // Convert MW to kW and calculate energy
-  const energyKWh = (powerOutput * 1000) * (durationSeconds / 3600);
-  
-  // Calculate earnings
-  const earnings = energyKWh * electricityPrice;
-  
-  return Math.max(0, earnings);
+  // Calculate earnings based on power output and duration
+  const powerMWh = powerOutput * durationSeconds / 3600; // Convert to MWh
+  const ratePerMWh = 1000000; // 1 million Rupiah per MWh
+  return powerMWh * ratePerMWh;
 }
 
 export function formatNumber(value: number, decimals: number = 2): string {

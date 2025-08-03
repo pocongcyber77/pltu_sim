@@ -245,12 +245,12 @@ export default function PLTUSimulator() {
             </h2>
             
             <div className="grid grid-cols-6 gap-1 lg:gap-2">
-              {levers.map((lever: ControlLeverType, index: number) => (
+              {levers.map((lever: ControlLeverType) => (
                 <motion.div
                   key={lever.id}
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: index * 0.1 }}
+                  transition={{ delay: 0.1 }}
                 >
                   <MemoizedControlLever
                     lever={lever}
@@ -263,7 +263,7 @@ export default function PLTUSimulator() {
 
           {/* Additional Indicators - Fixed height */}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 gap-2 lg:gap-4 mb-2 lg:mb-4 flex-shrink-0">
-            {additionalIndicators.map((indicator, index) => (
+            {additionalIndicators.map((indicator) => (
               <div key={indicator.label} className="bg-gray-800 rounded p-2 lg:p-4 border border-green-500">
                 <div className="text-xs lg:text-sm text-gray-400 mb-1">{indicator.label}</div>
                 <div className={`text-sm lg:text-lg font-mono ${indicator.color}`}>
