@@ -27,6 +27,26 @@ const WATER_RESPONSE_TIME = 90; // Water system takes 90 seconds (slowest)
 const TEMPERATURE_RESPONSE_TIME = 40; // Temperature changes take 40 seconds (thermal inertia)
 const PRESSURE_RESPONSE_TIME = 20; // Pressure changes take 20 seconds (faster but still realistic)
 
+// Smooth factors for different system components (0.01 - 0.2, smaller = slower)
+const SMOOTH_FACTORS = {
+  coalFeed: 0.05,      // Coal feed: moderate response
+  feedwater: 0.08,     // Feedwater: faster response
+  boilerPressure: 0.03, // Boiler pressure: slow response (thermal inertia)
+  steamTurbine: 0.04,  // Steam turbine: moderate response
+  condenser: 0.06,     // Condenser: moderate response
+  coolingWater: 0.10,  // Cooling water: fast response
+  airSupply: 0.07,     // Air supply: moderate response
+  fuelInjection: 0.15, // Fuel injection: fast response (emergency)
+  steamFlow: 0.05,     // Steam flow: moderate response
+  waterLevel: 0.02,    // Water level: very slow response
+  exhaustGas: 0.08,    // Exhaust gas: moderate response
+  emergencyValve: 0.20, // Emergency valve: instant response
+  steamTemp: 0.04,     // Steam temperature: slow response
+  rpm: 0.03,           // RPM: slow response (mechanical inertia)
+  pressure: 0.05,      // Pressure: moderate response
+  temperature: 0.04    // Temperature: slow response
+};
+
 interface CalculationParams {
   coalFeed: number;
   feedwater: number;
@@ -67,6 +87,19 @@ interface SystemResponse {
   condensateWaterFlow?: number;
   circulatingWaterFlow?: number;
   waterLevel?: number;
+}
+
+// ✅ Interpolasi Bertahap (Inersia Sistem) - Implementasi Baru
+/**
+ * Smooth approach function untuk simulasi inersia sistem
+ * @param current - nilai aktual dalam sistem
+ * @param target - nilai target dari tuas user
+ * @param smoothFactor - faktor kehalusan (0.01 - 0.2, semakin kecil semakin lambat)
+ * @param dt - delta time per update (detik)
+ * @returns nilai baru yang mendekati target secara bertahap
+ */
+function smoothApproach(current: number, target: number, smoothFactor: number, dt: number): number {
+  return current + (target - current) * (1 - Math.exp(-smoothFactor * dt));
 }
 
 // Thermodynamic calculations
@@ -600,7 +633,7 @@ function calculateHeatRate(params: CalculationParams): number {
   return coalEnergy / electricalEnergy;
 }
 
-// Realistic gradual change functions
+// Realistic gradual change functions - Updated with smoothApproach
 function interpolateValue(
   currentValue: number,
   targetValue: number,
@@ -611,11 +644,9 @@ function interpolateValue(
     return targetValue;
   }
   
-  // Exponential decay for realistic response
-  const timeConstant = responseTime / 3; // Time to reach 95% of target
-  const factor = 1 - Math.exp(-deltaTime / timeConstant);
-  
-  return currentValue + (targetValue - currentValue) * factor;
+  // Use smoothApproach for more realistic system inertia
+  const smoothFactor = 1 / responseTime; // Convert response time to smooth factor
+  return smoothApproach(currentValue, targetValue, smoothFactor, deltaTime);
 }
 
 // Complex physics interactions based on real PLTU systems
@@ -648,19 +679,21 @@ function calculateBoilerResponse(params: CalculationParams, currentState: Partia
   const heatLoss = currentTemp * 0.02 * deltaTime; // Heat loss to environment
   const netHeat = heatInput - heatLoss;
   
-  // 4. Temperature Response (with thermal inertia)
+  // 4. Temperature Response (with thermal inertia) - Updated with smoothApproach
   const tempChange = (netHeat / (SPECIFIC_HEAT_WATER * 1000)) * deltaTime / 3600; // °C/s
-  const newTemp = interpolateValue(currentTemp, currentTemp + tempChange, TEMPERATURE_RESPONSE_TIME, deltaTime);
+  const targetTemp = currentTemp + tempChange;
+  const newTemp = smoothApproach(currentTemp, targetTemp, SMOOTH_FACTORS.temperature, deltaTime);
   
-  // 5. Pressure Response (based on steam properties)
+  // 5. Pressure Response (based on steam properties) - Updated with smoothApproach
   const saturationPressure = Math.pow(newTemp / 100, 4) * 0.1; // Simplified steam table
-  const newPressure = interpolateValue(currentPressure, saturationPressure * (1 + fuelRate * 0.5), PRESSURE_RESPONSE_TIME, deltaTime);
+  const targetPressure = saturationPressure * (1 + fuelRate * 0.5);
+  const newPressure = smoothApproach(currentPressure, targetPressure, SMOOTH_FACTORS.pressure, deltaTime);
   
-  // 6. Steam Generation (with flow dynamics)
+  // 6. Steam Generation (with flow dynamics) - Updated with smoothApproach
   const maxSteamFlow = fuelRate * 500; // t/h maximum
   const steamEfficiency = Math.min(1, newTemp / STEAM_TEMP_BASE) * combustionEfficiency;
   const targetSteamFlow = maxSteamFlow * steamEfficiency;
-  const newSteamFlow = interpolateValue(currentFlow, targetSteamFlow, STEAM_RESPONSE_TIME, deltaTime);
+  const newSteamFlow = smoothApproach(currentFlow, targetSteamFlow, SMOOTH_FACTORS.steamFlow, deltaTime);
   
   // 7. Water Level Dynamics
   const evaporationRate = newSteamFlow * 0.1; // t/h
@@ -709,15 +742,14 @@ function calculateTurbineResponse(params: CalculationParams, currentState: Parti
   const steamPower = mainSteamFlow * availableWork * actualEfficiency / 3600; // MW
   const maxMechanicalPower = steamPower * valveOpening;
   
-  // 4. Turbine Speed Response (with mechanical inertia)
+  // 4. Turbine Speed Response (with mechanical inertia) - Updated with smoothApproach
   const targetRPM = 3000 * (maxMechanicalPower / 600); // 600 MW at 3000 RPM
-  const rpmChange = (targetRPM - currentRPM) * deltaTime / TURBINE_RESPONSE_TIME;
-  const newRPM = interpolateValue(currentRPM, targetRPM, TURBINE_RESPONSE_TIME, deltaTime);
+  const newRPM = smoothApproach(currentRPM, targetRPM, SMOOTH_FACTORS.rpm, deltaTime);
   
-  // 5. Generator Load Response
+  // 5. Generator Load Response - Updated with smoothApproach
   const maxElectricalPower = maxMechanicalPower * GENERATOR_EFFICIENCY;
   const targetLoad = Math.min(maxElectricalPower, loadDemand * 600); // 600 MW max
-  const newLoad = interpolateValue(currentLoad, targetLoad, TURBINE_RESPONSE_TIME, deltaTime);
+  const newLoad = smoothApproach(currentLoad, targetLoad, SMOOTH_FACTORS.steamTurbine, deltaTime);
   
   // 6. Frequency Control
   const frequency = 50 + (newRPM - 3000) / 60; // Hz

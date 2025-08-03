@@ -6,13 +6,20 @@ import { ControlLever as ControlLeverType } from '../types';
 interface ControlLeverProps {
   lever: ControlLeverType;
   onValueChange: (value: number) => void;
+  actualValue?: number; // Nilai aktual sistem (hasil smoothApproach)
 }
 
-export default function ControlLever({ lever, onValueChange }: ControlLeverProps) {
+export default function ControlLever({ lever, onValueChange, actualValue }: ControlLeverProps) {
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const percentage = ((lever.currentValue - lever.minValue) / (lever.maxValue - lever.minValue)) * 100;
+  // Gunakan actualValue jika tersedia, jika tidak gunakan currentValue
+  const displayValue = actualValue !== undefined ? actualValue : lever.currentValue;
+  const percentage = ((displayValue - lever.minValue) / (lever.maxValue - lever.minValue)) * 100;
+  
+  // Hitung perbedaan antara target (lever) dan aktual (sistem)
+  const targetPercentage = ((lever.currentValue - lever.minValue) / (lever.maxValue - lever.minValue)) * 100;
+  const difference = Math.abs(percentage - targetPercentage);
 
   const calculateValueFromY = (clientY: number): number => {
     if (!containerRef.current) return lever.currentValue;
@@ -118,13 +125,26 @@ export default function ControlLever({ lever, onValueChange }: ControlLeverProps
           onTouchStart={handleTouchStart}
           style={{ touchAction: 'none' }}
         >
-          {/* Lever indicator */}
+          {/* Actual System Value Indicator (hasil smoothApproach) */}
+          {actualValue !== undefined && (
+            <div 
+              className="absolute w-1.5 h-1.5 lg:w-2 lg:h-2 bg-blue-400 rounded-full shadow-lg"
+              style={{
+                top: `${100 - percentage}%`,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 5
+              }}
+            />
+          )}
+          
+          {/* Lever Target Indicator (nilai tuas user) */}
           <div 
             className={`absolute w-2 h-2 lg:w-3 lg:h-3 ${lever.color} rounded-full shadow-lg transition-all duration-150 ${
               isDragging ? 'scale-125' : 'hover:scale-110'
             }`}
             style={{
-              top: `${100 - percentage}%`,
+              top: `${100 - targetPercentage}%`,
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: 10
@@ -152,9 +172,18 @@ export default function ControlLever({ lever, onValueChange }: ControlLeverProps
       </div>
       
       <div className="text-center">
+        {/* Show both target and actual values */}
         <div className="text-xs lg:text-sm font-bold text-green-400">
-          {lever.currentValue.toFixed(0)}{lever.unit}
+          {displayValue.toFixed(0)}{lever.unit}
         </div>
+        
+        {/* Show difference indicator if actualValue is provided */}
+        {actualValue !== undefined && difference > 1 && (
+          <div className="text-xs text-blue-400 hidden lg:block">
+            Target: {lever.currentValue.toFixed(0)}{lever.unit}
+          </div>
+        )}
+        
         <div className="text-xs text-gray-400 hidden lg:block">
           {lever.minValue}-{lever.maxValue}{lever.unit}
         </div>

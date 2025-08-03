@@ -2,12 +2,44 @@ import { create } from 'zustand';
 import { ControlLever, LeverType, SystemState } from '../types';
 import { calculateSystemState, calculateEarnings } from '../utils/calculation';
 
+// Smooth factors for different system components (0.01 - 0.2, smaller = slower)
+const SMOOTH_FACTORS = {
+  coal_feed: 0.05,      // Coal feed: moderate response
+  feedwater: 0.08,      // Feedwater: faster response
+  boiler_pressure: 0.03, // Boiler pressure: slow response (thermal inertia)
+  steam_turbine: 0.04,  // Steam turbine: moderate response
+  condenser: 0.06,      // Condenser: moderate response
+  cooling_water: 0.10,  // Cooling water: fast response
+  air_supply: 0.07,     // Air supply: moderate response
+  fuel_injection: 0.15, // Fuel injection: fast response (emergency)
+  steam_flow: 0.05,     // Steam flow: moderate response
+  water_level: 0.02,    // Water level: very slow response
+  exhaust_gas: 0.08,    // Exhaust gas: moderate response
+  emergency_valve: 0.20, // Emergency valve: instant response
+};
+
+// ✅ Interpolasi Bertahap (Inersia Sistem) - Implementasi Baru
+/**
+ * Smooth approach function untuk simulasi inersia sistem
+ * @param current - nilai aktual dalam sistem
+ * @param target - nilai target dari tuas user
+ * @param smoothFactor - faktor kehalusan (0.01 - 0.2, semakin kecil semakin lambat)
+ * @param dt - delta time per update (detik)
+ * @returns nilai baru yang mendekati target secara bertahap
+ */
+function smoothApproach(current: number, target: number, smoothFactor: number, dt: number): number {
+  return current + (target - current) * (1 - Math.exp(-smoothFactor * dt));
+}
+
 interface SimulatorStore {
   // Control levers
   levers: ControlLever[];
   
   // System state
   systemState: SystemState;
+  
+  // Actual system values (hasil smoothApproach)
+  actualSystemValues: Record<string, number>;
   
   // Actions
   updateLever: (leverId: string, value: number) => void;
@@ -264,6 +296,7 @@ let gradualUpdateInterval: NodeJS.Timeout | null = null;
 export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   levers: initialLevers,
   systemState: initialSystemState,
+  actualSystemValues: {}, // Initialize actualSystemValues
 
   updateLever: (leverId: string, value: number) => {
     // Update lever value immediately for responsive UI
@@ -360,7 +393,8 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
         ...initialSystemState,
         trip: false,
         shutdownTime: 0
-      }
+      },
+      actualSystemValues: {} // Reset actualSystemValues
     });
   },
 
@@ -401,11 +435,20 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     const updatedLevers = state.levers.map(lever => {
       if (Math.abs(lever.currentValue - lever.targetValue) > 0.1) {
         hasChanges = true;
-        const diff = lever.targetValue - lever.currentValue;
-        const step = diff * lever.sensitivity * 0.05; // Smaller step for smoother movement
+        const smoothFactor = SMOOTH_FACTORS[lever.id as LeverType] || 0.05; // Default to 0.05 if not found
+        const currentActualValue = state.actualSystemValues[lever.id] || lever.currentValue;
+        const newActualValue = smoothApproach(currentActualValue, lever.targetValue, smoothFactor, 0.1); // Update every 100ms
+
+        set((state) => ({
+          actualSystemValues: {
+            ...state.actualSystemValues,
+            [lever.id]: newActualValue
+          }
+        }));
+
         return {
           ...lever,
-          currentValue: lever.currentValue + step
+          currentValue: newActualValue // Update lever's currentValue to the smoothed value
         };
       }
       return lever;
